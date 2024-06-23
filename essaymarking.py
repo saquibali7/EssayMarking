@@ -45,6 +45,7 @@ ps = PorterStemmer()
 lemmatizer = WordNetLemmatizer()
 nlp = spacy.load('en_core_web_sm')
 
+
 def preprocess_text(text):
     text = text.lower()
     text = re.sub(r'[^\w\s]', '', text)
@@ -75,7 +76,6 @@ print(f"max_score : {dataset['score'].max()}")
 print(f"min_score : {dataset['score'].min()}")
 
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer
 
 class CustomDataset(Dataset):
     def __init__(self, dataset, word_to_idx, max_length, max_score):
@@ -92,9 +92,6 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         text = self.texts[idx]
         score = self.scores[idx]
-        temp = [0]*max_score
-        temp[int(score)-1] = 1
-        score = temp
         tokens = preprocess_text(text)
         idx = [self.word_to_idx[token] for token in tokens if token in self.word_to_idx]
         idx = idx + [0] * (self.max_length - len(idx))
@@ -104,6 +101,7 @@ train_size = int(0.8 * len(dataset))
 test_size = len(dataset) - train_size
 
 dataset = CustomDataset(dataset, word_to_idx, max_length, max_score)
+
 
 train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_size, test_size])
 train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
@@ -126,8 +124,8 @@ class Head(nn.Module):
         self.key = nn.Linear(embd_size, head_size)
         self.query = nn.Linear(embd_size, head_size)
         self.value = nn.Linear(embd_size, head_size)
-        self.register_buffer('tril', torch.tril(torch.ones(max_length, max_length)))
         self.dropout = nn.Dropout(dropout)
+        self.register_buffer('tril', torch.tril(torch.ones(max_length, max_length)))
 
     def forward(self, x):
         B, T, C = x.shape
@@ -182,43 +180,43 @@ class Block(nn.Module):
         return x
 
 class Model(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.embeddding = nn.Embedding(vocab_size,embd_size)
-            self.pos_embeddding = nn.Embedding(vocab_size, embd_size)
-            self.blocks = nn.Sequential(*[Block(embd_size,num_head) for _ in range(num_layers)])
-            self.ln = nn.LayerNorm(embd_size)
-            self.lm_head = nn.Linear(embd_size, max_score)
+  def __init__(self):
+    super().__init__()
+    self.embeddding = nn.Embedding(vocab_size,embd_size)
+    self.pos_embeddding = nn.Embedding(vocab_size, embd_size)
+    self.blocks = nn.Sequential(*[Block(embd_size,num_head) for _ in range(num_layers)])
+    self.ln = nn.LayerNorm(embd_size)
+    self.lm_head = nn.Linear(embd_size, max_score)
 
-        def forward(self, idx, targets=None):
-            B, T  = idx.shape
-            tok_embd = self.embeddding(idx)
-            temp = torch.arange(T).to(device)
-            pos_embd = self.pos_embeddding(temp)
-            x = tok_embd+pos_embd
-            x = self.blocks(x)
-            x = self.ln(x)
-            logits = self.lm_head(x)
+  def forward(self, idx, targets=None):
+    B, T  = idx.shape
+    tok_embd = self.embeddding(idx)
+    temp = torch.arange(T).to(device)
+    pos_embd = self.pos_embeddding(temp)
+    x = tok_embd+pos_embd
+    x = self.blocks(x)
+    x = self.ln(x)
+    x = x.max(dim=1)[0]
+    logits = self.lm_head(x)
 
-            if targets==None:
-                loss=None
-            else :
-                B, T, C = logits.shape
-                logits = logits.view(B*C, T)
-                targets = targets.view(B*C)
-                loss = F.cross_entropy(logits, targets)
-
-            return logits, loss
-
+    if targets is None:
+      loss = None
+    else:
+      loss = F.cross_entropy(logits, targets)
+    return logits, loss
 
 model  = Model().to(device)
 optimizer = optim.AdamW(model.parameters(), lr=1e-3)
-loss = nn.CrossEntropyLoss()
+criterion = nn.CrossEntropyLoss()
+
+for idx_batch, (idx, targets) in enumerate(train_loader):
+  print(idx.shape, targets.shape)
+  break
 
 def eval(val_loader):
   model.eval()
   total_loss = 0
-  
+
   with torch.no_grad():
     for idx_batch, (idx, targets) in enumerate(val_loader):
       idx = idx.to(device)
@@ -232,12 +230,12 @@ def train(num_epochs):
     for epoch in range(num_epochs):
       model.train()
       total_loss = 0
-
       for idx_batch, (idx, targets) in enumerate(train_loader):
         idx = idx.to(device)
         targets = targets.to(device)
         logits, loss = model(idx, targets)
         total_loss+=loss
+        
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -246,5 +244,5 @@ def train(num_epochs):
       print(f"train loss : {total_loss/len(train_loader)}")
       print(f"eval loss: {eval(val_loader)/len(val_loader)}")
 
-if __main__ == '__main__':
-  train(100)
+train(20)
+
